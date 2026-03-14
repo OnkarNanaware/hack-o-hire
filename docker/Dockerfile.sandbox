@@ -1,0 +1,21 @@
+# ─────────────────────────────────────────────────
+# Sandbox Dockerfile
+# Ultra-minimal isolated environment for agent execution
+# NO network access, read-only filesystem
+# ─────────────────────────────────────────────────
+
+FROM python:3.11-alpine
+
+LABEL description="AI Fraud Detection - Isolated Agent Sandbox"
+
+# Minimal dependencies only
+RUN apk add --no-cache strace
+
+WORKDIR /sandbox
+
+# Non-root sandboxed user with no privileges
+RUN adduser -D -u 65534 sandbox
+USER sandbox
+
+# Entrypoint is controlled by the executor
+CMD ["python", "-c", "print('Sandbox ready')"]

@@ -1,0 +1,48 @@
+# Application Configuration
+
+app:
+  name: "AI Fraud Detection Platform"
+  version: "1.0.0"
+  debug: false
+  log_level: "INFO"
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 4
+  timeout: 60
+
+database:
+  type: "postgresql"  # or "sqlite"
+  url: "${DATABASE_URL}"  # set in .env
+  pool_size: 10
+
+redis:
+  url: "${REDIS_URL}"  # set in .env
+  ttl_seconds: 3600
+
+models:
+  registry_path: "./backend/models/registry.json"
+  device: "cuda"  # or "cpu"
+
+sandbox:
+  docker_image: "fraud-sandbox:latest"
+  timeout_seconds: 30
+  max_memory_mb: 512
+  max_cpu_percent: 50
+  network_disabled: true
+
+file_upload:
+  max_size_mb: 25
+  allowed_types:
+    - "application/pdf"
+    - "message/rfc822"  # .eml
+    - "audio/wav"
+    - "audio/mpeg"
+    - "application/zip"
+    - "application/x-pe"
+
+cors:
+  origins:
+    - "http://localhost:3000"
+    - "http://localhost:5173"

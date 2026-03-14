@@ -1,0 +1,97 @@
+version: "3.9"
+
+services:
+  # ──────────────────────────────────────────────
+  # Backend API Service
+  # ──────────────────────────────────────────────
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    container_name: fraud_api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://fraud_user:fraud_pass@db:5432/fraud_db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ../backend:/app/backend
+      - ../configs:/app/configs
+      - model_cache:/app/models
+    networks:
+      - fraud_net
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────
+  # Frontend Service
+  # ──────────────────────────────────────────────
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    container_name: fraud_frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    networks:
+      - fraud_net
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────
+  # PostgreSQL Database
+  # ──────────────────────────────────────────────
+  db:
+    image: postgres:15-alpine
+    container_name: fraud_db
+    environment:
+      POSTGRES_USER: fraud_user
+      POSTGRES_PASSWORD: fraud_pass
+      POSTGRES_DB: fraud_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - fraud_net
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────
+  # Redis Cache
+  # ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: fraud_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - fraud_net
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────
+  # Agent Sandbox (isolated, no network)
+  # ──────────────────────────────────────────────
+  sandbox:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.sandbox
+    container_name: fraud_sandbox
+    network_mode: "none"
+    security_opt:
+      - seccomp:../backend/sandbox/seccomp_profiles/strict.json
+      - no-new-privileges:true
+    read_only: true
+    cap_drop:
+      - ALL
+    restart: "no"
+
+volumes:
+  postgres_data:
+  model_cache:
+
+networks:
+  fraud_net:
+    driver: bridge

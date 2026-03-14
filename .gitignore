@@ -1,0 +1,55 @@
+.env
+.env.local
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.so
+*.dylib
+
+# ML Models (use Git LFS or external storage)
+backend/models/**/*.pt
+backend/models/**/*.pkl
+backend/models/**/*.onnx
+backend/models/**/*.bin
+backend/models/**/*.safetensors
+
+# Node
+node_modules/
+frontend/dist/
+frontend/build/
+*.tsbuildinfo
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Docker
+docker/data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Large datasets
+datasets/**/*.zip
+datasets/**/*.tar.gz
+datasets/**/*.csv
+datasets/**/*.json
+!datasets/README.md
+!datasets/*/metadata.yaml

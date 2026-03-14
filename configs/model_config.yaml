@@ -1,0 +1,38 @@
+# Model Configuration per Module
+
+phishing_email:
+  model_type: "bert-base-uncased"
+  checkpoint: "models/phishing_email/bert_phishing_v1.pt"
+  max_seq_length: 512
+  url_classifier: "models/phishing_email/url_classifier.pkl"
+  threshold: 0.5
+
+credential_leak:
+  ner_model_path: "models/credential_leak/ner_model"
+  trufflehog_config: "configs/trufflehog.yaml"
+
+malicious_attachment:
+  yara_rules_dir: "models/malicious_attachment/yara_rules"
+  pe_classifier: "models/malicious_attachment/pe_classifier.pkl"
+  hash_db_url: "https://mb-api.abuse.ch/api/v1/"
+
+website_spoofing:
+  visual_model: "models/website_spoofing/visual_similarity.onnx"
+  domain_classifier: "models/website_spoofing/domain_classifier.pkl"
+  screenshot_timeout: 10
+  whois_timeout: 5
+
+deepfake_voice:
+  mfcc_model: "models/deepfake_voice/mfcc_svm.pkl"
+  wav2vec_model: "models/deepfake_voice/wav2vec_finetune.pt"
+  sample_rate: 16000
+  n_mfcc: 40
+
+prompt_injection:
+  bert_model: "models/prompt_injection/bert_injection_v1.pt"
+  llama_guard_config: "models/prompt_injection/llama_guard_config.json"
+  max_tokens: 2048
+
+agent_sandbox:
+  seccomp_profile: "backend/sandbox/seccomp_profiles/strict.json"
+  execution_timeout: 30

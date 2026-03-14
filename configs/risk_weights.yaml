@@ -1,0 +1,35 @@
+# Risk Engine Module Weights
+# Weights must sum to 1.0
+# Adjust based on your deployment context
+
+risk_weights:
+  phishing_email: 0.20
+  credential_leak: 0.15
+  malicious_attachment: 0.20
+  website_spoofing: 0.15
+  deepfake_voice: 0.10
+  prompt_injection: 0.10
+  agent_sandbox: 0.10
+
+# Risk Tier Thresholds
+thresholds:
+  safe:
+    min: 0
+    max: 20
+    action: "monitor"
+    color: "#22c55e"
+  suspicious:
+    min: 21
+    max: 50
+    action: "alert"
+    color: "#eab308"
+  high_risk:
+    min: 51
+    max: 75
+    action: "quarantine"
+    color: "#f97316"
+  critical:
+    min: 76
+    max: 100
+    action: "block"
+    color: "#ef4444"
