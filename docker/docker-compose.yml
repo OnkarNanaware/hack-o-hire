@@ -1,9 +1,25 @@
 version: "3.9"
 
+# ═══════════════════════════════════════════════════════════════
+# FraudSentinel — Docker Compose
+#
+# LOCAL DEV:    Uses SQL Server Express + Redis (community)
+# STAGING:      Azure SQL Flexible Server + Azure Cache for Redis Enterprise
+# PRODUCTION:   AKS — see /docs/deployment_guide.md
+#
+# NOTE: In production (Barclays), these services are REPLACED by:
+#   db     → Azure SQL Database (Business Critical)
+#   redis  → Azure Cache for Redis Enterprise (private endpoint)
+#   queue  → Azure Service Bus Premium
+#   api    → AKS pod (fraudsentinelacr.azurecr.io/fraud-api)
+#   sandbox→ AKS ephemeral pod (isolated node pool, deny-all egress)
+# ═══════════════════════════════════════════════════════════════
+
 services:
-  # ──────────────────────────────────────────────
+
+  # ──────────────────────────────────────────────────────────────
   # Backend API Service
-  # ──────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────
   api:
     build:
       context: ..
@@ -12,22 +28,34 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://fraud_user:fraud_pass@db:5432/fraud_db
+      - APP_ENV=development
+      # DEV ONLY — in production, all secrets from Azure Key Vault
+      - DATABASE_URL=mssql+pyodbc://sa:Dev_Password123!@db:1433/fraud_db?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes
       - REDIS_URL=redis://redis:6379/0
+      - AZURE_KEYVAULT_URL=${AZURE_KEYVAULT_URL:-}       # empty in dev
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ../backend:/app/backend
       - ../configs:/app/configs
       - model_cache:/app/models
     networks:
-      - fraud_net
+      - fraud_internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     restart: unless-stopped
 
-  # ──────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────
   # Frontend Service
-  # ──────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────
   frontend:
     build:
       context: ..
@@ -38,60 +66,116 @@ services:
     depends_on:
       - api
     networks:
-      - fraud_net
+      - fraud_internal
     restart: unless-stopped
 
-  # ──────────────────────────────────────────────
-  # PostgreSQL Database
-  # ──────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────
+  # Database — SQL Server Express (DEV ONLY)
+  # Production replacement: Azure SQL Database Business Critical
+  #   - Transparent Data Encryption (TDE)
+  #   - Always Encrypted for PII
+  #   - Geo-redundant replicas (UK South + UK West)
+  #   - Azure Defender for SQL
+  #   - Entra ID authentication (no passwords)
+  # ──────────────────────────────────────────────────────────────
   db:
-    image: postgres:15-alpine
-    container_name: fraud_db
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: fraud_db_dev
+    platform: linux/amd64
     environment:
-      POSTGRES_USER: fraud_user
-      POSTGRES_PASSWORD: fraud_pass
-      POSTGRES_DB: fraud_db
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=Dev_Password123!
+      - MSSQL_PID=Express
     ports:
-      - "5432:5432"
+      - "1433:1433"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - sqlserver_data:/var/opt/mssql
     networks:
-      - fraud_net
+      - fraud_internal
+    healthcheck:
+      test: ["CMD", "/opt/mssql-tools/bin/sqlcmd", "-S", "localhost", "-U", "sa", "-P", "Dev_Password123!", "-Q", "SELECT 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
     restart: unless-stopped
 
-  # ──────────────────────────────────────────────
-  # Redis Cache
-  # ──────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────
+  # Cache — Redis Community (DEV ONLY)
+  # Production replacement: Azure Cache for Redis Enterprise
+  #   - TLS 1.2+ enforced
+  #   - Private endpoint (no public internet)
+  #   - RDB + AOF persistence (no data loss)
+  #   - Role-based access via Entra ID
+  #   - Geo-replication across UK South + UK West
+  # ──────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    container_name: fraud_redis
+    container_name: fraud_redis_dev
+    command: redis-server --save 60 1 --loglevel warning
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
     networks:
-      - fraud_net
+      - fraud_internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
 
-  # ──────────────────────────────────────────────
-  # Agent Sandbox (isolated, no network)
-  # ──────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────
+  # Message Queue — Redis Pub/Sub (DEV ONLY)
+  # Production replacement: Azure Service Bus Premium
+  #   - Guaranteed message delivery (dead-letter queue)
+  #   - Message ordering & deduplication
+  #   - Private endpoint (VNet integrated)
+  #   - Full audit trail for every message
+  #   - Topics: fraud-alerts → Barclays SIEM/SOC
+  # ──────────────────────────────────────────────────────────────
+  # NOTE: In dev, Redis doubles as the message queue.
+  # In production, replace with Azure Service Bus SDK calls in the API.
+
+  # ──────────────────────────────────────────────────────────────
+  # Agent Sandbox (DEV — isolated, no network)
+  # Production replacement: AKS ephemeral pod on dedicated node pool
+  #   - Node pool tainted + tolerated for sandbox-only workloads
+  #   - Kubernetes NetworkPolicy: deny all ingress + egress
+  #   - Azure Defender for Containers runtime monitoring
+  #   - seccomp profile: RuntimeDefault (AKS managed)
+  #   - Pod Security Standard: restricted
+  # ──────────────────────────────────────────────────────────────
   sandbox:
     build:
       context: ..
       dockerfile: docker/Dockerfile.sandbox
-    container_name: fraud_sandbox
+    container_name: fraud_sandbox_dev
     network_mode: "none"
     security_opt:
-      - seccomp:../backend/sandbox/seccomp_profiles/strict.json
       - no-new-privileges:true
     read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec
     cap_drop:
       - ALL
+    mem_limit: 512m
+    cpus: "0.5"
     restart: "no"
 
 volumes:
-  postgres_data:
+  sqlserver_data:
+    driver: local
+  redis_data:
+    driver: local
   model_cache:
+    driver: local
 
 networks:
-  fraud_net:
+  fraud_internal:
     driver: bridge
+    # Production: AKS pod networking via Azure CNI
+    # All services behind Azure Private Endpoints — no public IPs
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24

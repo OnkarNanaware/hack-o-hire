@@ -1,48 +1,209 @@
-# Application Configuration
+# ═══════════════════════════════════════════════════════════════
+# FraudSentinel — Enterprise Configuration
+# Deployment Target: Barclays Bank (Azure Private Cloud)
+# Compliance: FCA · PCI-DSS Level 1 · GDPR · BCBS 239
+# ═══════════════════════════════════════════════════════════════
 
 app:
-  name: "AI Fraud Detection Platform"
+  name: "FraudSentinel"
   version: "1.0.0"
+  environment: "production"
   debug: false
   log_level: "INFO"
 
 server:
   host: "0.0.0.0"
   port: 8000
-  workers: 4
+  workers: 8           # Scale via AKS HPA
   timeout: 60
+  trusted_proxies: "10.0.0.0/8"   # Azure internal network CIDR
 
+# ──────────────────────────────────────────────────────────────
+# DATABASE — Azure SQL Database (Business Critical Tier)
+# Replaces: PostgreSQL (open-source)
+# Why: FCA/PCI-DSS compliant, TDE, geo-redundancy, Entra ID auth
+# ──────────────────────────────────────────────────────────────
 database:
-  type: "postgresql"  # or "sqlite"
-  url: "${DATABASE_URL}"  # set in .env
-  pool_size: 10
+  type: "mssql"                   # Azure SQL Database (SQL Server engine)
+  driver: "pyodbc"                # pip install pyodbc mssql-django
+  # Connection string loaded from Azure Key Vault — never hardcoded
+  connection_string_secret: "kv://fraudsentinel-kv/fraud-db-connection-string"
+  pool_size: 20
+  max_overflow: 10
+  pool_timeout: 30
+  pool_recycle: 3600
+  # Azure SQL features
+  always_encrypted_columns:       # PII columns encrypted at application layer
+    - "user_email"
+    - "source_ip"
+    - "raw_payload_hash"
+  row_level_security: true        # RLS policies applied per team/department
+  connection_timeout: 30
+  # Read replica for analytics queries (geo-redundant secondary)
+  read_replica_secret: "kv://fraudsentinel-kv/fraud-db-readonly-string"
 
-redis:
-  url: "${REDIS_URL}"  # set in .env
+# ──────────────────────────────────────────────────────────────
+# CACHE — Azure Cache for Redis Enterprise
+# Replaces: Community Redis (ephemeral, no persistence)
+# Why: Persistent, encrypted, Entra ID auth, no public endpoint
+# ──────────────────────────────────────────────────────────────
+cache:
+  type: "azure_redis_enterprise"
+  # Connection string from Azure Key Vault
+  connection_string_secret: "kv://fraudsentinel-kv/fraud-redis-connection-string"
+  ssl: true                       # TLS 1.2+ enforced
   ttl_seconds: 3600
+  max_memory_policy: "volatile-lru"
+  # Persistence (RDB snapshot every 60s, AOF for every-write durability)
+  persistence:
+    rdb_enabled: true
+    rdb_interval_seconds: 60
+    aof_enabled: true
+    aof_policy: "everysec"
 
-models:
-  registry_path: "./backend/models/registry.json"
-  device: "cuda"  # or "cpu"
+# ──────────────────────────────────────────────────────────────
+# MESSAGE QUEUE — Azure Service Bus (Premium)
+# Replaces: Redis Pub/Sub (no audit trail, no dead-letter)
+# Why: Fraud events need guaranteed delivery, ordering, DLQ
+# ──────────────────────────────────────────────────────────────
+message_queue:
+  type: "azure_service_bus"
+  namespace_secret: "kv://fraudsentinel-kv/fraud-servicebus-connection"
+  topics:
+    fraud_alerts: "fraud-detection-alerts"      # → Barclays SIEM / SOC
+    audit_events: "fraud-audit-trail"           # → Azure Log Analytics (immutable)
+    block_actions: "fraud-block-commands"       # → Firewall/email gateway actions
+  # Premium tier for VNet integration + private endpoint
+  tier: "premium"
+  message_ttl_hours: 24
+  dead_letter_queue: true
+  max_delivery_count: 5
 
+# ──────────────────────────────────────────────────────────────
+# SECRETS MANAGEMENT — Azure Key Vault + HSM
+# No secrets in config files or environment variables
+# ──────────────────────────────────────────────────────────────
+secrets:
+  provider: "azure_keyvault"
+  vault_url: "https://fraudsentinel-kv.vault.azure.net"
+  # Authentication via AKS Managed Identity (no credentials needed)
+  auth_method: "managed_identity"
+  # HSM-protected secrets for model signing keys
+  hsm_enabled: true
+
+# ──────────────────────────────────────────────────────────────
+# STORAGE — Azure Blob Storage (Immutable + Encrypted)
+# ──────────────────────────────────────────────────────────────
+storage:
+  type: "azure_blob"
+  account_name: "fraudsentinelstorage"
+  # Containers
+  containers:
+    models: "ml-models"              # Model weights (.pt, .onnx)
+    uploads_temp: "temp-uploads"     # Ephemeral; auto-delete policy: 1 hour
+    audit_evidence: "audit-evidence" # Immutable blob storage (WORM policy)
+    reports: "fraud-reports"
+  # Encryption: Microsoft Managed Keys (upgrade to Customer Managed Key in v2)
+  encryption: "microsoft_managed"
+  # Immutability for audit container (FCA requirement: 7 years retention)
+  immutability_policy:
+    container: "audit-evidence"
+    retention_days: 2555   # 7 years
+
+# ──────────────────────────────────────────────────────────────
+# IDENTITY — Azure Active Directory (Entra ID)
+# Barclays staff authenticate via corporate SSO
+# ──────────────────────────────────────────────────────────────
+identity:
+  provider: "azure_ad"
+  tenant_id_secret: "kv://fraudsentinel-kv/azure-tenant-id"
+  client_id_secret: "kv://fraudsentinel-kv/azure-client-id"
+  # Allowed groups from Barclays AD
+  allowed_groups:
+    - "fraud-analysts"
+    - "security-engineers"
+    - "risk-officers"
+    - "platform-admins"
+  # MFA enforced at Azure AD Conditional Access level
+  mfa_enforced: true
+
+# ──────────────────────────────────────────────────────────────
+# MONITORING — Microsoft Sentinel + Azure Monitor
+# ──────────────────────────────────────────────────────────────
+monitoring:
+  # Application Insights for API telemetry
+  app_insights_connection_secret: "kv://fraudsentinel-kv/appinsights-connection"
+  # Log Analytics workspace (immutable audit log)
+  log_analytics_workspace_secret: "kv://fraudsentinel-kv/log-analytics-workspace"
+  # Structured JSON logs (shipped to Log Analytics via AKS log forwarder)
+  log_format: "json"
+  # Alert on risk score > 75 → Microsoft Sentinel incident
+  sentinel_integration: true
+  sentinel_severity_mapping:
+    safe: "informational"
+    suspicious: "low"
+    high_risk: "medium"
+    critical: "high"
+
+# ──────────────────────────────────────────────────────────────
+# SANDBOX — AKS Isolated Node Pool
+# Replaces: Local Docker-in-Docker
+# Why: AKS provides cluster-level isolation + Azure Defender monitoring
+# ──────────────────────────────────────────────────────────────
 sandbox:
-  docker_image: "fraud-sandbox:latest"
+  execution_mode: "aks_pod"          # Spin up ephemeral AKS pod per execution
+  node_pool: "sandbox-nodepool"      # Dedicated tainted node pool, no egress
+  docker_image: "fraudsentinel-sandbox:latest"
+  image_registry: "fraudsentinelacr.azurecr.io"
   timeout_seconds: 30
   max_memory_mb: 512
-  max_cpu_percent: 50
-  network_disabled: true
+  max_cpu: "500m"
+  network_policy: "deny-all"        # Kubernetes NetworkPolicy: deny all egress
+  seccomp_profile: "RuntimeDefault"
+  privileged: false
+  read_only_root_filesystem: true
+  # Azure Defender for Containers monitors all sandbox pods
+  defender_monitoring: true
 
+# ──────────────────────────────────────────────────────────────
+# FILE UPLOADS
+# ──────────────────────────────────────────────────────────────
 file_upload:
   max_size_mb: 25
+  temp_storage: "azure_blob"        # Never local disk in production
+  auto_delete_minutes: 60           # Lifecycle policy via Azure Blob
   allowed_types:
     - "application/pdf"
-    - "message/rfc822"  # .eml
+    - "message/rfc822"
     - "audio/wav"
     - "audio/mpeg"
     - "application/zip"
-    - "application/x-pe"
+    - "application/vnd.ms-excel"
+    - "application/vnd.openxmlformats-officedocument"
 
+# ──────────────────────────────────────────────────────────────
+# COMPLIANCE FLAGS
+# ──────────────────────────────────────────────────────────────
+compliance:
+  pci_dss_mode: true
+  gdpr_mode: true
+  fca_audit_trail: true
+  bcbs239_lineage: true
+  # Data residency — UK only (FCA requirement)
+  data_residency_regions:
+    - "uksouth"
+    - "ukwest"
+  # PII masking in logs
+  mask_pii_in_logs: true
+  # Audit retention (FCA: 5 years minimum; we use 7)
+  audit_retention_years: 7
+
+# ──────────────────────────────────────────────────────────────
+# CORS — Restrict to Barclays internal domains only
+# ──────────────────────────────────────────────────────────────
 cors:
   origins:
-    - "http://localhost:3000"
-    - "http://localhost:5173"
+    - "https://fraud.internal.barclays.com"
+    - "https://fraud-staging.internal.barclays.com"
+  # No public internet access — behind Azure Front Door WAF
+  allow_credentials: true
