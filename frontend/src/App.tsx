@@ -7,10 +7,7 @@ import AttachmentScanner from './pages/AttachmentScanner'
 import WebsiteScanner from './pages/WebsiteScanner'
 import VoiceDetector from './pages/VoiceDetector'
 import PromptInjectionAnalyzer from './pages/PromptInjectionAnalyzer'
-
-// ─────────────────────────────────────────────────────────
-// App Root — Router + Shell Layout
-// ─────────────────────────────────────────────────────────
+import RedTeamSimulator from './pages/RedTeamSimulator'
 
 function App() {
   return (
@@ -25,7 +22,7 @@ function App() {
             <Route path="/website" element={<WebsiteScanner />} />
             <Route path="/voice" element={<VoiceDetector />} />
             <Route path="/prompt" element={<PromptInjectionAnalyzer />} />
-            {/* Placeholder routes — implement later */}
+            <Route path="/redteam" element={<RedTeamSimulator />} />
             <Route path="/sandbox" element={
               <PlaceholderPage title="Agent Sandbox Monitor" emoji="🤖"
                 desc="Isolated Docker sandbox execution monitor with syscall tracing and behavior analysis." />
@@ -41,7 +38,6 @@ function App() {
   )
 }
 
-// Simple placeholder for unimplemented pages
 const PlaceholderPage: React.FC<{ title: string; emoji: string; desc: string }> = ({ title, emoji, desc }) => (
   <div className="animate-fade-in" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
     <div className="card" style={{ textAlign: 'center', maxWidth: 480, padding: '60px 40px' }}>
